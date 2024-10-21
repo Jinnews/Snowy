@@ -1,0 +1,58 @@
+name: Public Upstream Sync
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+jobs:
+  sync_latest_from_upstream:
+    name: Sync latest commits from upstream repo
+    runs-on: ubuntu-latest
+
+    steps:
+      # 标准签出
+      - name: Checkout target repo
+        uses: actions/checkout@v4
+# 如果上游仓库有对.github/workflows/下的文件进行变更，则需要使用有workflow权限的token
+#        with:
+#          token: ${{ secrets.ACTION_TOKEN }}
+        
+      - name: Extract Repo and User
+        id: extract
+        run: |
+          repository_name=${{ github.event.repository.name }}
+          if echo "$repository_name" | grep -qE '(.+)-syncfrom-(.+)'; then
+            repoName=$(echo "$repository_name" | sed -E 's/(.+)-syncfrom-(.+)/\1/')
+            userName=$(echo "$repository_name" | sed -E 's/(.+)-syncfrom-(.+)/\2/')
+            echo "RepoName: $repoName"
+            echo "UserName: $userName"
+            echo "repoName=$repoName" >> $GITHUB_ENV
+            echo "userName=$userName" >> $GITHUB_ENV
+          else
+            echo '无法从仓库名中提取 repoName 和 userName，格式应为 ${repoName}-syncfrom-${userName}，当前为：'$GITHUB_REPOSITORY
+            exit 1
+          fi
+
+      # 获取分支名
+      - name: Get branch name (merge)
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: echo "BRANCH_NAME=$(echo ${GITHUB_REF#refs/heads/} | tr / -)" >> $GITHUB_ENV
+      - name: Get branch name (pull request)
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: echo "BRANCH_NAME=$(echo ${GITHUB_HEAD_REF} | tr / -)" >> $GITHUB_ENV
+
+      # 运行同步动作
+      - name: Sync upstream changes
+        id: sync
+        uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
+        with:
+          upstream_sync_repo: ${{ env.userName }}/${{ env.repoName }}
+          upstream_sync_branch: ${{ env.BRANCH_NAME }}
+          upstream_pull_args: --allow-unrelated-histories --no-edit
+          target_sync_branch: ${{ env.BRANCH_NAME }}
+          target_repo_token: ${{ secrets.GITHUB_TOKEN }}
+          # 设置太久之前可能会导致报错
+          shallow_since: '1 days ago'
+          test_mode: false
